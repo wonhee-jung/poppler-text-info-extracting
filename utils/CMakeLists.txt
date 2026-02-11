@@ -1,3 +1,7 @@
+# Modified by [Wonhee-jung], 2026-02-11
+# Added text layout analysis functionality.
+# This file is part of a modified version of Poppler (GPL).
+
 include(FindGettext)
 include(FindIntl)
 
@@ -140,6 +144,15 @@ add_executable(pdftotext ${pdftotext_SOURCES})
 target_link_libraries(pdftotext ${common_libs})
 install(TARGETS pdftotext DESTINATION bin)
 install(FILES pdftotext.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
+
+# pdftextanalysis
+set(pdftextanalysis_SOURCES ${common_srcs}
+  pdftextanalysis.cc
+)
+add_executable(pdftextanalysis ${pdftextanalysis_SOURCES})
+target_link_libraries(pdftextanalysis ${common_libs})
+install(TARGETS pdftextanalysis DESTINATION bin)
+install(FILES pdftextanalysis.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 
 # pdftohtml
 set(pdftohtml_SOURCES ${common_srcs}

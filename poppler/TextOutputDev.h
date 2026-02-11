@@ -36,6 +36,11 @@
 //
 //========================================================================
 
+// Modified by [Wonhee-jung], 2026-02-11
+// Added text layout analysis functionality.
+// I annotated for original feature in the code.
+// This file is part of a modified version of Poppler (GPL).
+
 #ifndef TEXTOUTPUTDEV_H
 #define TEXTOUTPUTDEV_H
 
@@ -45,6 +50,9 @@
 #include "OutputDev.h"
 #include "PDFRectangle.h"
 
+// 전방 선언 
+// 컴파일러에게 미리 해당 타입에 대한 정보를 알려줌
+// 순환 참조 방지
 class GooString;
 class Gfx;
 class GfxFont;
@@ -69,67 +77,78 @@ class TextSelectionVisitor;
 using TextOutputFunc = void (*)(void *stream, const char *text, int len);
 
 enum SelectionStyle
-{
-    selectionStyleGlyph,
-    selectionStyleWord,
-    selectionStyleLine
+{  
+    // 텍스트 = 문자 + 글리프
+    // 문자 : 고유한 유니코드 값을 가짐
+    // 글리프 : 화면에 출력되는 문자의 모양
+    // => 문자와 글리프의 조합으로 화면에 출력됨
+    selectionStyleGlyph, // 텍스트의 글리프 단위 스타일
+    selectionStyleWord, // 텍스트의 단어 단위 스타일
+    selectionStyleLine // 텍스트의 줄 단위 스타일
 };
 
 enum EndOfLineKind
 {
-    eolUnix, // LF
-    eolDOS, // CR+LF
-    eolMac // CR
+    eolUnix, // LF, 유닉스 체계에서 사용하는 줄바꿈 방식
+    eolDOS, // CR+LF, DOS/윈도우 체계에서 사용하는 줄바꿈 방식
+    eolMac // 구형 CR, Mac OS 체계에서 사용하는 줄바꿈 방식
 };
 
 //------------------------------------------------------------------------
 // TextFontInfo
+// PDF 내에서 사용되는 폰트와 메타데이터, 속성을 관리하는 클래스
 //------------------------------------------------------------------------
 
 class POPPLER_PRIVATE_EXPORT TextFontInfo
 {
 public:
-    explicit TextFontInfo(const GfxState *state);
-    ~TextFontInfo();
+    explicit TextFontInfo(const GfxState *state); // GfxState 포인터로부터 TextFontInfo 객체 생성을 방지
+    ~TextFontInfo(); // 클래스 소멸자, 메모리 해제 및 자원 정리
 
-    TextFontInfo(const TextFontInfo &) = delete;
-    TextFontInfo &operator=(const TextFontInfo &) = delete;
+    // 연산자의 사용을 금지
+    // 얕은 복사 방지
+    // 복사 생성자는 원본 객체를 참조하여 새 객체를 생성 => 얕은 복사 발생
+    // 복사 대입 연산자도 이미 할당된 객체에 다른 객체 값을 대입하는 연산 => 얕은 복사 발생
+    // => 얕은 복사 방지를 위해 복사 생성자와 복사 대입 연산자를 삭제
+    TextFontInfo(const TextFontInfo &) = delete; // 복사 생성자
+    TextFontInfo &operator=(const TextFontInfo &) = delete; // 복사 대입 연산자 삭제
 
-    bool matches(const GfxState *state) const;
-    bool matches(const TextFontInfo *fontInfo) const;
-    bool matches(const Ref *ref) const;
+    bool matches(const GfxState *state) const; // GfxState 포인터로부터 폰트 정보 일치 여부 확인
+    bool matches(const TextFontInfo *fontInfo) const; // TextFontInfo 포인터로부터 폰트 정보 일치 여부 확인
+    bool matches(const Ref *ref) const; // Ref 포인터로부터 폰트 정보 일치 여부 확인
 
     // Get the font ascent, or a default value if the font is not set
-    double getAscent() const;
+    double getAscent() const; // 폰트의 상승 값 반환
 
     // Get the font descent, or a default value if the font is not set
-    double getDescent() const;
+    double getDescent() const; // 폰트의 하락 값 반환
 
     // Get the writing mode, or Horizontal if the font is not set
-    GfxFont::WritingMode getWMode() const;
+    GfxFont::WritingMode getWMode() const; // 폰트의 쓰기 모드(수평/수직 쓰기) 반환
 
     // Get the font name (which may be NULL).
     const GooString *getFontName() const { return fontName; }
 
     // Get font descriptor flags.
-    bool isFixedWidth() const { return flags & fontFixedWidth; }
-    bool isSerif() const { return flags & fontSerif; }
-    bool isSymbolic() const { return flags & fontSymbolic; }
-    bool isItalic() const { return flags & fontItalic; }
-    bool isBold() const { return flags & fontBold; }
+    bool isFixedWidth() const { return flags & fontFixedWidth; } // 폰트의 고정 너비 여부 확인
+    bool isSerif() const { return flags & fontSerif; } // 폰트의 세리프 여부 확인
+    bool isSymbolic() const { return flags & fontSymbolic; } // 폰트의 심볼릭 여부 확인
+    bool isItalic() const { return flags & fontItalic; } // 폰트의 이탤릭 여부 확인
+    bool isBold() const { return flags & fontBold; } // 폰트의 볼드 여부 확인
 
 private:
     std::shared_ptr<GfxFont> gfxFont;
-    GooString *fontName;
-    int flags;
+    GooString *fontName; // 폰트 이름
+    int flags; // 폰트 속성 플래그
 
-    friend class TextWord;
-    friend class TextPage;
-    friend class TextSelectionPainter;
+    friend class TextWord; // TextWord 클래스가 TextFontInfo 클래스의 멤버 함수에 접근 가능하게 허용
+    friend class TextPage; 
+    friend class TextSelectionPainter; 
 };
 
 //------------------------------------------------------------------------
 // TextWord
+// PDF 내에서 사용하는 단일 단어의 텍스트 정보를 관리하는 클래스
 //------------------------------------------------------------------------
 
 class POPPLER_PRIVATE_EXPORT TextWord
@@ -145,23 +164,56 @@ public:
     TextWord &operator=(const TextWord &) = delete;
 
     // Add a character to the word.
+    // 단어에 한 문자를 추가하는 함수
+    // Args:
+        //   fontA: 폰트 정보
+        //   x: 문자의 x 좌표
+        //   y: 문자의 y 좌표
+        //   dx: 문자의 x 좌표 변화량
+        //   dy: 문자의 y 좌표 변화량
+        //   charPosA: 문자의 위치
+        //   charLen: 문자의 길이
+        //   c: 문자의 코드
+        //   u: 문자의 유니코드
+        //   textMatA: 문자의 텍스트 행렬
+    // Returns: none
     void addChar(TextFontInfo *fontA, double x, double y, double dx, double dy, int charPosA, int charLen, CharCode c, Unicode u, const Matrix &textMatA);
 
     // Attempt to add a character to the word as a combining character.
     // Either character u or the last character in the word must be an
     // acute, dieresis, or other combining character.  Returns true if
     // the character was added.
+    // 합성 문자를 단어에 추가하는 함수
+    // Args:
+        //   fontA: 폰트 정보
+        //   fontSizeA: 폰트 크기
+        //   x: 문자의 x 좌표
+        //   y: 문자의 y 좌표
+        //   dx: 문자의 x 좌표 변화량
+        //   dy: 문자의 y 좌표 변화량
+        //   charPosA: 문자의 위치
+        //   charLen: 문자의 길이
+        //   c: 문자의 코드
+        //   u: 문자의 유니코드
+        //   textMatA: 문자의 텍스트 행렬
+    // Returns : True or False
     bool addCombining(TextFontInfo *fontA, double fontSizeA, double x, double y, double dx, double dy, int charPosA, int charLen, CharCode c, Unicode u, const Matrix &textMatA);
 
     // Merge <word> onto the end of <this>.
+    // 다른 단어(word)를 TextWord 객체의 끝에 추가하는 함수
+    // Args:
+        //   word: 추가할 단어
+    // Returns: none
     void merge(TextWord *word);
 
     // Compares <this> to <word>, returning -1 (<), 0 (=), or +1 (>),
     // based on a primary-axis comparison, e.g., x ordering if rot=0.
+    // Textword를 primary axis 기준으로 비교하는 함수
     int primaryCmp(const TextWord *word) const;
 
     // Return the distance along the primary axis between <this> and
     // <word>.
+    // Textword를 primary axis 기준으로 비교한 후 거리를 반환하는 함수
     double primaryDelta(const TextWord *word) const;
 
     static bool cmpYX(const TextWord *word1, const TextWord *word2);
@@ -184,6 +236,13 @@ public:
         *g = colorG;
         *b = colorB;
     }
+    // Textword의 바운딩 박스를 반환하는 함수
+    // Args:
+    //   xMinA: 바운딩 박스의 x 최소 값
+    //   yMinA: 바운딩 박스의 y 최소 값
+    //   xMaxA: 바운딩 박스의 x 최대 값
+    //   yMaxA: 바운딩 박스의 y 최대 값
+    // Returns: none
     void getBBox(double *xMinA, double *yMinA, double *xMaxA, double *yMaxA) const
     {
         *xMinA = xMin;
@@ -256,6 +315,8 @@ private:
 
 //------------------------------------------------------------------------
 // TextPool
+// PDF에서 추출된 Textword 객체를 기준에 따라 분류하고 관리하는 클래스
+// PDF를 통해 만들어진 Textword 인스턴스를 모으고, 관리
 //------------------------------------------------------------------------
 
 class TextPool
@@ -293,6 +354,7 @@ struct TextFlowData;
 
 //------------------------------------------------------------------------
 // TextLine
+// PDF 내에서 추출된 텍스트 한 줄을 관리하는 클래스
 //------------------------------------------------------------------------
 
 class TextLine
@@ -464,6 +526,7 @@ private:
 
 //------------------------------------------------------------------------
 // TextFlow
+// 
 //------------------------------------------------------------------------
 
 class TextFlow

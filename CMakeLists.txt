@@ -15,6 +15,11 @@ include(PopplerMacros)
 # depend on a CMake release that includes a fix for those issues.
 # This is set after including PopplerMacros since that sets the default
 # CMAKE_BUILD_TYPE and also sets _CMAKE_BUILD_TYPE_UPPER.
+
+# Modified by [Wonhee-jung], 2026-02-11
+# Added text layout analysis functionality.
+# This file is part of a modified version of Poppler (GPL).
+
 set(CMAKE_TRY_COMPILE_CONFIGURATION "${_CMAKE_BUILD_TYPE_UPPER}")
 
 include(MacroOptionalFindPackage)
@@ -483,6 +488,7 @@ set(poppler_SRCS
   poppler/XRef.cc
   poppler/PSOutputDev.cc
   poppler/TextOutputDev.cc
+  poppler/TextAnalysisOutputDev.cc
   poppler/PageLabelInfo.cc
   poppler/SecurityHandler.cc
   poppler/Sound.cc

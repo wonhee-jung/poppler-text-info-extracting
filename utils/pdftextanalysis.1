@@ -1,0 +1,215 @@
+.\" Modified by [Wonhee-jung], 2026-02-11
+.\" Added documentation for pdftextanalysis utility.
+
+.\" PDF Text Extraction Analysis Tool Manual Page
+.TH pdftextanalysis 1 "10 February 2026"
+.SH NAME
+pdftextanalysis \- PDF text extraction analysis tool
+.SH SYNOPSIS
+.B pdftextanalysis
+[options]
+.I PDF-file
+.SH DESCRIPTION
+.B pdftextanalysis
+analyzes a PDF file to determine the CID to Unicode mapping completeness for each page.
+It classifies pages into five categories based on character-level Unicode mapping state:
+.PP
+.B IMAGE
+\- No text objects exist (image-based PDF)
+.PP
+.B UNICODE_ALL_MATCH
+\- All characters have valid Unicode mappings and sufficient character count (> 10 chars)
+.PP
+.B UNICODE_ALL_MATCH_BUT_LESS_CHARS
+\- All characters have valid Unicode mappings but character count is low (<= 10 chars)
+.br
+This typically indicates pages with only page numbers, headers, or footers
+.PP
+.B UNICODE_NONE_MATCH
+\- No characters have valid Unicode mappings
+.PP
+.B UNICODE_PARTIAL_MATCH
+\- Some but not all characters have valid Unicode mappings
+.PP
+The tool outputs results in JSON format to stdout, suitable for automated processing
+and integration with other tools.
+.SH OPTIONS
+.TP
+.B \-v
+Print version info.
+.TP
+.B \-h
+Print usage information.
+.TP
+.B \-help
+Print usage information.
+.TP
+.B \-\-help
+Print usage information.
+.SH OUTPUT FORMAT
+The tool outputs JSON to stdout with the following structure.
+.PP
+.B Successful analysis:
+.PP
+.nf
+{
+  "status": "OK",
+  "pages": [
+    {"page": 1, "type": "UNICODE_ALL_MATCH"},
+    {"page": 2, "type": "UNICODE_PARTIAL_MATCH"},
+    {"page": 3, "type": "UNICODE_NONE_MATCH"},
+    {"page": 4, "type": "IMAGE"}
+  ]
+}
+.fi
+.PP
+.B Document-level failure:
+.PP
+.nf
+{
+  "status": "ERROR",
+  "error": "PDF_OPEN_FAILED"
+}
+.fi
+.PP
+.B Success response fields:
+.TP
+.B status
+Always "OK" on successful analysis
+.TP
+.B pages
+Array of page analysis results
+.PP
+Each page entry contains:
+.TP
+.B page
+The page number (1-indexed)
+.TP
+.B type
+The classification: "IMAGE", "UNICODE_ALL_MATCH", "UNICODE_ALL_MATCH_BUT_LESS_CHARS",
+"UNICODE_NONE_MATCH", or "UNICODE_PARTIAL_MATCH"
+.PP
+.B Error response fields:
+.TP
+.B status
+Always "ERROR" on document-level failure
+.TP
+.B error
+Error reason code (see ERROR CODES section)
+.SH CLASSIFICATION LOGIC
+The tool uses deterministic logic based on CID to Unicode mapping completeness:
+.PP
+.B Step 1: Count drawChar operations
+.PP
+Each character drawing operation is tracked to determine if text objects exist.
+.PP
+.B Step 2: Count valid Unicode mappings
+.PP
+For each character, check if a valid Unicode mapping exists. A mapping is considered
+invalid if:
+.PP
+   - The Unicode length is 0 (no mapping provided)
+.PP
+   - The Unicode pointer is null
+.PP
+   - The Unicode value is U+FFFD (replacement character, indicating mapping failure)
+.PP
+.B Step 3: Classify based on mapping completeness and character count
+.PP
+The minimum character threshold is 10 characters.
+.PP
+   - If drawCharCount == 0 → 
+.B IMAGE
+.PP
+   - If unicodeMappedCount == drawCharCount AND drawCharCount > 10 →
+.B UNICODE_ALL_MATCH
+.PP
+   - If unicodeMappedCount == drawCharCount AND drawCharCount <= 10 →
+.B UNICODE_ALL_MATCH_BUT_LESS_CHARS
+.PP
+   - If unicodeMappedCount == 0 →
+.B UNICODE_NONE_MATCH
+.PP
+   - Otherwise →
+.B UNICODE_PARTIAL_MATCH
+.SH EXAMPLES
+Analyze a PDF file:
+.PP
+.nf
+pdftextanalysis document.pdf
+.fi
+.PP
+Use with Python for automated processing with error handling:
+.PP
+.nf
+import subprocess, json
+
+result = subprocess.run(['pdftextanalysis', 'doc.pdf'],
+                       capture_output=True, text=True)
+data = json.loads(result.stdout)
+
+if data['status'] == 'ERROR':
+    print(f"Document-level error: {data['error']}")
+    if data['error'] == 'PDF_OPEN_FAILED':
+        print("File may be corrupted or invalid")
+    elif data['error'] == 'PDF_PERMISSION_DENIED':
+        print("File is DRM-protected")
+else:
+    # Process page-level results
+    for page in data['pages']:
+        print(f"Page {page['page']}: {page['type']}")
+.fi
+.PP
+Example decision logic based on page classification:
+.PP
+.nf
+if page_type in ["IMAGE", "UNICODE_ALL_MATCH_BUT_LESS_CHARS"]:
+    # Use OCR (no text or only page numbers/headers)
+elif page_type == "UNICODE_ALL_MATCH":
+    # Direct text extraction reliable
+elif page_type in ["UNICODE_NONE_MATCH", "UNICODE_PARTIAL_MATCH"]:
+    # Consider OCR or font-specific extraction
+.fi
+.SH ERROR CODES
+When status is "ERROR", the error field contains one of the following codes:
+.TP
+.B PDF_OPEN_FAILED
+The PDF file could not be opened or parsed. This indicates file corruption,
+invalid PDF format, or inaccessible file.
+.TP
+.B PDF_PERMISSION_DENIED
+The PDF file is protected by DRM or permissions that prevent text extraction.
+This check is only performed if ENFORCE_PERMISSIONS was enabled at build time.
+.PP
+.B Note on rendering errors:
+Poppler is compiled without exception handling. If a fatal rendering error occurs
+during page processing (e.g., severely corrupted content), the program will
+terminate abnormally rather than returning a structured error response.
+.PP
+These are document-level failures detected before rendering.
+They are NOT inferred from page statistics.
+.SH EXIT CODES
+The pdftextanalysis utility exits with one of the following values:
+.TP
+.B 0
+Successful completion (status: "OK").
+.TP
+.B 1
+Failed to open the PDF file (error: "PDF_OPEN_FAILED").
+.TP
+.B 3
+Permission denied (error: "PDF_PERMISSION_DENIED").
+.TP
+.B 99
+Invalid command line arguments.
+.PP
+If a fatal rendering error occurs during page processing, the program will
+terminate abnormally with a non-zero exit code determined by Poppler.
+.SH AUTHOR
+This tool was developed as an extension to the Poppler PDF rendering library.
+.SH SEE ALSO
+.BR pdftotext (1),
+.BR pdfinfo (1),
+.BR pdffonts (1)
+.PP
+The Poppler project: http://poppler.freedesktop.org

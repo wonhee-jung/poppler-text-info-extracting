@@ -54,6 +54,11 @@
 //
 //========================================================================
 
+// Modified by [Wonhee-jung], 2026-02-11
+// Added text layout analysis functionality.
+// I annotated for original feature in the code.
+// This file is part of a modified version of Poppler (GPL).
+
 #include <config.h>
 
 #include <cstdio>
@@ -86,18 +91,22 @@
 
 // Each bucket in a text pool includes baselines within a range of
 // this many points.
+// 텍스트 풀의 각 버킷에 포함되는 기준선 범위 (점 단위). 텍스트를 수직 위치에 따라 그룹화하는 데 사용됩니다.
 constexpr int textPoolStep = 4;
 
 // Inter-character space width which will cause addChar to start a new
 // word.
+// 문자 간 간격이 이 값을 초과하면 새 단어를 시작하는 함수 호출
 constexpr double minWordBreakSpace = 0.1;
 
 // Negative inter-character space width, i.e., overlap, which will
 // cause addChar to start a new word.
+// addChar 함수가 새 단어를 시작하도록 하는 음수 문자 간 중첩의 최소 너비.
 constexpr double minDupBreakOverlap = 0.2;
 
 // Max distance between baselines of two lines within a block, as a
 // fraction of the font size.
+// 블록 내 두 라인의 기준선 사이의 최대 거리 (폰트 크기 대비 비율).
 constexpr double maxLineSpacingDelta = 1.5;
 
 // Max difference in primary font sizes on two lines in the same
@@ -105,91 +114,112 @@ constexpr double maxLineSpacingDelta = 1.5;
 // current block; delta2 is used when examining text that overlaps the
 // current block; delta3 is used when examining text to the left and
 // right of the current block.
+// 동일 블록 내 두 라인의 주 폰트 크기 최대 차이. Delta1은 현재 블록 위아래의 새 라인 검사 시, Delta2는 겹치는 텍스트 검사 시, Delta3은 좌우 텍스트 검사 시 사용됩니다.
 constexpr double maxBlockFontSizeDelta1 = 0.05;
 constexpr double maxBlockFontSizeDelta2 = 0.6;
 constexpr double maxBlockFontSizeDelta3 = 0.2;
 
 // Max difference in font sizes inside a word.
+// 단어 내 폰트 크기의 최대 차이.
 constexpr double maxWordFontSizeDelta = 0.05;
 
 // Maximum distance between baselines of two words on the same line,
 // e.g., distance between subscript or superscript and the primary
 // baseline, as a fraction of the font size.
+// 동일 라인 내 두 단어의 기준선 사이의 최대 거리 (폰트 크기 대비 비율). (예: 아래첨자/위첨자와 주 기준선 거리)
 constexpr double maxIntraLineDelta = 0.5;
 
 // Maximum inter-word spacing, as a fraction of the font size.
+// 단어 간 최대 간격 (폰트 크기 대비 비율).
 constexpr double maxWordSpacing = 1.5;
 
 // Maximum horizontal spacing which will allow a word to be pulled
 // into a block, as a fraction of the font size.
 // This default value can be tweaked via API.
+// 단어를 블록으로 가져올 수 있도록 허용하는 최대 수평 간격 (폰트 크기 대비 비율). 이 기본값은 API를 통해 조정 가능합니다.
 double TextOutputDev::minColSpacing1_default = 0.7;
 
 // Minimum spacing between columns, as a fraction of the font size.
+// 컬럼 간 최소 간격 (폰트 크기 대비 비율).
 constexpr double minColSpacing2 = 1.0;
 
 // Maximum vertical spacing between blocks within a flow, as a
 // multiple of the font size.
+// 흐름 내 블록 간 최대 수직 간격 (폰트 크기의 배수).
 constexpr double maxBlockSpacing = 2.5;
 
 // Minimum spacing between characters within a word, as a fraction of
 // the font size.
+// 단어 내 문자 간 최소 간격 (폰트 크기 대비 비율).
 constexpr double minCharSpacing = -0.5;
 
 // Maximum spacing between characters within a word, as a fraction of
 // the font size, when there is no obvious extra-wide character
 // spacing.
+// 명백한 넓은 문자 간격이 없을 때 단어 내 문자 간 최대 간격 (폰트 크기 대비 비율).
 constexpr double maxCharSpacing = 0.03;
 
 // When extra-wide character spacing is detected, the inter-character
 // space threshold is set to the minimum inter-character space
 // multiplied by this constant.
+// 넓은 문자 간격이 감지될 때, 문자 간 간격 임계값은 최소 문자 간격에 이 상수를 곱한 값으로 설정됩니다.
 constexpr double maxWideCharSpacingMul = 1.3;
 
 // Upper limit on spacing between characters in a word.
+// 단어 내 문자 간격의 상한.
 constexpr double maxWideCharSpacing = 0.4;
 
 // Max difference in primary,secondary coordinates (as a fraction of
 // the font size) allowed for duplicated text (fake boldface, drop
 // shadows) which is to be discarded.
+// 중복 텍스트(가짜 볼드체, 그림자 효과)를 버리기 위해 허용되는 주/보조 좌표의 최대 차이 (폰트 크기 대비 비율).
 constexpr double dupMaxPriDelta = 0.1;
 constexpr double dupMaxSecDelta = 0.2;
 
 // Max width of underlines (in points).
+// 밑줄의 최대 너비 (점 단위).
 constexpr int maxUnderlineWidth = 3;
 
 // Min distance between baseline and underline (in points).
 //~ this should be font-size-dependent
+// 기준선과 밑줄 사이의 최소 거리 (점 단위).
 constexpr int minUnderlineGap = -2;
 
 // Max distance between baseline and underline (in points).
 //~ this should be font-size-dependent
+// 기준선과 밑줄 사이의 최대 거리 (점 단위).
 constexpr int maxUnderlineGap = 4;
 
 // Max horizontal distance between edge of word and start of underline
 // (in points).
 //~ this should be font-size-dependent
+// 단어 가장자리와 밑줄 시작점 사이의 최대 수평 거리 (점 단위).
 constexpr int underlineSlack = 1;
 
 // Max distance between edge of text and edge of link border
+// 텍스트 가장자리와 링크 테두리 가장자리 사이의 최대 거리.
 constexpr int hyperlinkSlack = 2;
 
 // Max distance between characters when combining a base character and
 // combining character
+// 기본 문자와 조합 문자를 결합할 때 문자 간의 최대 거리.
 constexpr double combMaxMidDelta = 0.3;
 constexpr double combMaxBaseDelta = 0.4;
 
 // Text is considered diagonal if abs(tan(angle)) > diagonalThreshold.
 // (Or 1/tan(angle) for 90/270 degrees.)
+// abs(tan(angle)) > diagonalThreshold 이거나 (90/270도일 경우 1/tan(angle))인 경우 텍스트는 대각선으로 간주됩니다.
 constexpr double diagonalThreshold = 0.1;
 
 // How opaque a selection on a glyphless font should be. Since the font is
 // glyphless and overlaid over text in image form, this must enable users
 // to read the underlying image. Issue #157
+// 글리프 없는 폰트의 선택 영역 불투명도. 폰트가 글리프가 없고 이미지 형태의 텍스트 위에 겹쳐져 있으므로, 사용자가 기본 이미지를 읽을 수 있어야 합니다.
 constexpr double glyphlessSelectionOpacity = 0.4;
 
 // Returns whether x is between a and b or equal to a or b.
 // a and b don't need to be sorted.
+// a와 b가 정렬되어 있지 않아도 된다.
 #define XBetweenAB(x, a, b) (!(((x) > (a) && (x) > (b)) || ((x) < (a) && (x) < (b))) ? true : false)
 
 namespace {
@@ -201,6 +231,9 @@ inline bool isAscii7(Unicode uchar)
 
 }
 
+/**
+PDF 문서 내에서 양방향 텍스트를 맞는 순서로 재정렬할 때 사용
+*/
 static int reorderText(const Unicode *text, int len, const UnicodeMap *uMap, bool primaryLR, GooString *s, Unicode *u)
 {
     char lre[8], rle[8], popdf[8], buf[8];
@@ -449,6 +482,7 @@ void TextWord::addChar(TextFontInfo *fontA, double x, double y, double dx, doubl
         setInitialBounds(fontA, x, y);
     }
 
+    // TextPage::beginWord()에서 각 case 정의
     if (wMode == GfxFont::WritingMode::Vertical) { // vertical writing mode
         // NB: the rotation value has been incremented by 1 (in
         // TextPage::beginWord()) for vertical writing mode
@@ -498,6 +532,7 @@ void TextWord::setInitialBounds(TextFontInfo *fontA, double x, double y)
     double descent = fontA->getDescent() * fontSize;
     wMode = fontA->getWMode();
 
+    // TextPage::beginWord()에서 각 case 정의
     if (wMode == GfxFont::WritingMode::Vertical) { // vertical writing mode
         // NB: the rotation value has been incremented by 1 (in
         // TextPage::beginWord()) for vertical writing mode
