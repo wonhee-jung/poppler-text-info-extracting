@@ -19,6 +19,8 @@
 #include "CharTypes.h"
 #include <vector>
 #include <string>
+#include <set>
+#include <utility>
 
 class GfxState;
 class XRef;
@@ -71,22 +73,34 @@ public:
     // Generate error JSON output
     static std::string toErrorJSON(const std::string &errorReason);
 
-    // Get analysis results
+    // Info about a single character that could not be mapped to Unicode
+    struct UndecodedCharInfo
+    {
+        int charCode;             // Original character code (decimal)
+        std::string fontName;     // Font name
+        std::string fontType;     // Font type string (e.g. "Type1", "TrueType", "CIDType0")
+        std::string encodingName; // Encoding name (e.g. "Identity-H", "WinAnsiEncoding")
+        bool hasToUnicodeCMap;    // Whether the font has an explicit ToUnicode CMap
+    };
+
+    // Per-page analysis results
     struct PageStats
     {
         int pageNumber;
         int drawCharCount;
         int unicodeMappedCount;
         std::string pageType; // "IMAGE", "UNICODE_ALL_MATCH", "UNICODE_ALL_MATCH_BUT_LESS_CHARS", "UNICODE_NONE_MATCH", "UNICODE_PARTIAL_MATCH"
+        std::vector<UndecodedCharInfo> undecodedChars; // Unique (charCode, fontName) pairs that failed Unicode mapping
     };
 
     const std::vector<PageStats> &getPageResults() const { return pageResults; }
 
 private:
     static constexpr int MIN_CHAR_THRESHOLD = 10; // Minimum character count to consider page as having meaningful text
-    
+
     std::vector<PageStats> pageResults;
     PageStats currentPageStats;
+    std::set<std::pair<int, std::string>> seenUndecodedKeys; // Tracks (charCode, fontName) seen on current page for deduplication
 };
 
 #endif

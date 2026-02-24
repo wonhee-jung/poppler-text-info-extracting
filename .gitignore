@@ -20,3 +20,20 @@ poppler-qt5-uninstalled.pc
 poppler-splash-uninstalled.pc
 poppler-uninstalled.pc
 /build/
+
+# CMake-related files
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+*.cmake
+
+# Custom additions for build artifacts
+poppler/libpoppler.map
+poppler/libpoppler.so
+poppler/libpoppler.so.*
+poppler/config.h
+poppler/poppler_private_export.h
+poppler/utils/
+.dockerignore
+Dockerfile
