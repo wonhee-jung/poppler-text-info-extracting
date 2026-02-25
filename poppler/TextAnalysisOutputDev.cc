@@ -16,6 +16,8 @@
 #include "GfxState.h"
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <cmath>
 
 //------------------------------------------------------------------------
 // Helper functions
@@ -86,7 +88,29 @@ static std::string escapeJsonString(const std::string &s)
 // TextAnalysisOutputDev
 //------------------------------------------------------------------------
 
+// static
+// 유효한 유니코드인지 판별하는 메서드
+bool TextAnalysisOutputDev::isInvalidUnicode(Unicode cp)
+{
+    if (cp == 0xFFFD) // 대체 문자
+        return true;
+    if (cp == 0x0000) // Null
+        return true;
+    if (cp >= 0x0001 && cp <= 0x001F) // 아스키 제어 문자
+        return true;
+    if (cp >= 0xE000 && cp <= 0xF8FF) // PUA
+        return true;
+    // Isolated surrogates (U+D800–U+DFFF) 
+    if (cp >= 0xD800 && cp <= 0xDFFF) // 분리된 서로게이트 영역
+        return true;
+    return false;
+}
+
 TextAnalysisOutputDev::TextAnalysisOutputDev()
+    : hasInvisibleText(false)
+    , invisibleGlyphCount(0)
+    , invisibleGlyphWithToUnicodeCount(0)
+    , allGlyphsInsideImage(true)
 {
     currentPageStats.pageNumber = 0;
     currentPageStats.drawCharCount = 0;
@@ -98,51 +122,179 @@ TextAnalysisOutputDev::~TextAnalysisOutputDev() = default;
 
 void TextAnalysisOutputDev::startPage(int pageNum, GfxState * /*state*/, XRef * /*xref*/)
 {
-    // Initialize statistics for new page
     currentPageStats.pageNumber = pageNum;
     currentPageStats.drawCharCount = 0;
     currentPageStats.unicodeMappedCount = 0;
     currentPageStats.pageType = "";
     currentPageStats.undecodedChars.clear();
     seenUndecodedKeys.clear();
+
+    hasInvisibleText = false;
+    allGlyphsInsideImage = true;
+
+    invisibleGlyphCount = 0;
+    invisibleGlyphWithToUnicodeCount = 0;
+
+    imageBBoxes.clear();
+    glyphBBoxes.clear();
+}
+
+// 이미지 박스 정의 
+void TextAnalysisOutputDev::registerImageBBox(GfxState *state, int width, int height)
+{
+    if (!state)
+        return;
+
+    double w = static_cast<double>(width);
+    double h = static_cast<double>(height);
+
+    // Transform the 4 corners of the image from image space to device space
+    double corners[4][2] = {
+        { 0, 0 },
+        { w, 0 },
+        { 0, h },
+        { w, h }
+    };
+
+    double txMin = 0, tyMin = 0, txMax = 0, tyMax = 0;
+    bool first = true;
+
+    for (auto &corner : corners) {
+        double tx, ty;
+        state->transform(corner[0], corner[1], &tx, &ty);
+        if (first) {
+            txMin = txMax = tx;
+            tyMin = tyMax = ty;
+            first = false;
+        } else {
+            txMin = std::min(txMin, tx);
+            txMax = std::max(txMax, tx);
+            tyMin = std::min(tyMin, ty);
+            tyMax = std::max(tyMax, ty);
+        }
+    }
+
+    imageBBoxes.push_back({ txMin, tyMin, txMax, tyMax });
+}
+
+void TextAnalysisOutputDev::drawImageMask(GfxState *state, Object * /*ref*/, Stream * /*str*/, int width, int height, bool /*invert*/, bool /*interpolate*/, bool /*inlineImg*/)
+{
+    registerImageBBox(state, width, height);
+}
+
+void TextAnalysisOutputDev::drawImage(GfxState *state, Object * /*ref*/, Stream * /*str*/, int width, int height, GfxImageColorMap * /*colorMap*/, bool /*interpolate*/, const int * /*maskColors*/, bool /*inlineImg*/)
+{
+    registerImageBBox(state, width, height);
+}
+
+void TextAnalysisOutputDev::drawSoftMaskedImage(GfxState *state, Object * /*ref*/, Stream * /*str*/, int width, int height, GfxImageColorMap * /*colorMap*/, bool /*interpolate*/, Stream * /*maskStr*/, int /*maskWidth*/, int /*maskHeight*/, GfxImageColorMap * /*maskColorMap*/, bool /*maskInterpolate*/)
+{
+    registerImageBBox(state, width, height);
 }
 
 void TextAnalysisOutputDev::endPage()
 {
-    // Classify page based on CID → Unicode mapping completeness
+    // --- Step 1: Compute ALL_GLYPHS_INSIDE_IMAGE ---
+    constexpr double epsilon = 0.01;
+
+    for (const auto &glyph : glyphBBoxes) {
+        bool insideAnyImage = false;
+        for (const auto &image : imageBBoxes) {
+            if (glyph.xMin >= image.xMin - epsilon &&
+                glyph.yMin >= image.yMin - epsilon &&
+                glyph.xMax <= image.xMax + epsilon &&
+                glyph.yMax <= image.yMax + epsilon)
+            {
+                insideAnyImage = true;
+                break;
+            }
+        }
+        if (!insideAnyImage) {
+            allGlyphsInsideImage = false;
+            break;
+        }
+    }
+
+    // --- Step 2: OCR strict Boolean classification (highest priority) ---
+    bool allInvisibleHaveToUnicode =
+        (invisibleGlyphCount > 0) &&
+        (invisibleGlyphCount == invisibleGlyphWithToUnicodeCount);
+
+    if (hasInvisibleText &&
+        allInvisibleHaveToUnicode &&
+        allGlyphsInsideImage)
+    {
+        currentPageStats.pageType = "OCR_INVISIBLE_LAYER";
+        pageResults.push_back(currentPageStats);
+        return;
+    }
+
+    // --- Step 3: UNICODE_* classification ---
     if (currentPageStats.drawCharCount == 0) {
-        // No text objects found - image-based PDF
         currentPageStats.pageType = "IMAGE";
     } else if (currentPageStats.unicodeMappedCount == currentPageStats.drawCharCount) {
-        // All characters have valid Unicode mappings
         if (currentPageStats.drawCharCount < MIN_CHAR_THRESHOLD) {
-            // Too few characters (e.g., page numbers, headers only)
             currentPageStats.pageType = "UNICODE_ALL_MATCH_BUT_LESS_CHARS";
         } else {
-            // Sufficient characters with full Unicode mapping
             currentPageStats.pageType = "UNICODE_ALL_MATCH";
         }
     } else if (currentPageStats.unicodeMappedCount == 0) {
-        // No characters have valid Unicode mappings
         currentPageStats.pageType = "UNICODE_NONE_MATCH";
     } else {
-        // Some but not all characters have valid Unicode mappings
         currentPageStats.pageType = "UNICODE_PARTIAL_MATCH";
     }
 
-    // Store results for this page
     pageResults.push_back(currentPageStats);
 }
 
-void TextAnalysisOutputDev::drawChar(GfxState *state, double /*x*/, double /*y*/, double /*dx*/, double /*dy*/, double /*originX*/, double /*originY*/, CharCode c, int /*nBytes*/, const Unicode *u, int uLen)
+void TextAnalysisOutputDev::drawChar(GfxState *state, double x, double y, double dx, double dy, double /*originX*/, double /*originY*/, CharCode c, int /*nBytes*/, const Unicode *u, int uLen)
 {
-    // Increment total character count
     currentPageStats.drawCharCount++;
 
-    // Check if Unicode mapping exists and is valid
-    // U+FFFD is the replacement character indicating mapping failure
-    if (uLen > 0 && u != nullptr && u[0] != 0xFFFD && u[0] != 0) {
-        // Valid Unicode mapping found
+    // --- Invisible glyph detection (render mode 3 = invisible) ---
+    int renderMode = state ? state->getRender() : -1;
+
+    if (renderMode == 3) {
+        hasInvisibleText = true;
+        invisibleGlyphCount++;
+
+        // Strict ToUnicode check for invisible glyphs
+        if (state) {
+            const auto &font = state->getFont();
+            bool hasToUnicode = font && font->hasToUnicodeCMap();
+            if (hasToUnicode) {
+                invisibleGlyphWithToUnicodeCount++;
+            }
+        }
+    }
+
+    // --- Glyph bbox in device space ---
+    if (state) {
+        double tx1, ty1, tx2, ty2;
+        state->transform(x,      y,      &tx1, &ty1);
+        state->transform(x + dx, y + dy, &tx2, &ty2);
+
+        BBox glyph;
+        glyph.xMin = std::min(tx1, tx2);
+        glyph.xMax = std::max(tx1, tx2);
+        glyph.yMin = std::min(ty1, ty2);
+        glyph.yMax = std::max(ty1, ty2);
+        glyphBBoxes.push_back(glyph);
+    }
+
+    // --- Unicode validity check ---
+    bool validUnicode = true;
+
+    if (!u || uLen == 0) {
+        validUnicode = false;
+    } else {
+        for (int i = 0; i < uLen && validUnicode; ++i) {
+            if (isInvalidUnicode(u[i]))
+                validUnicode = false;
+        }
+    }
+
+    if (validUnicode) {
         currentPageStats.unicodeMappedCount++;
     } else {
         // Collect undecoded character info (deduplicated by charCode + fontName)

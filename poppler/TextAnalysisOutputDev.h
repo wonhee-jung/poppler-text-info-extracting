@@ -23,6 +23,9 @@
 #include <utility>
 
 class GfxState;
+class GfxImageColorMap;
+class Object;
+class Stream;
 class XRef;
 
 //------------------------------------------------------------------------
@@ -50,7 +53,7 @@ public:
     bool interpretType3Chars() override { return false; }
 
     // Does this device need non-text content?
-    bool needNonText() override { return false; }
+    bool needNonText() override { return true; }
 
     //----- initialization and control
 
@@ -64,6 +67,14 @@ public:
 
     // Draw a character
     void drawChar(GfxState *state, double x, double y, double dx, double dy, double originX, double originY, CharCode c, int nBytes, const Unicode *u, int uLen) override;
+
+    //----- image drawing (for OCR detection)
+
+    void drawImageMask(GfxState *state, Object *ref, Stream *str, int width, int height, bool invert, bool interpolate, bool inlineImg) override;
+
+    void drawImage(GfxState *state, Object *ref, Stream *str, int width, int height, GfxImageColorMap *colorMap, bool interpolate, const int *maskColors, bool inlineImg) override;
+
+    void drawSoftMaskedImage(GfxState *state, Object *ref, Stream *str, int width, int height, GfxImageColorMap *colorMap, bool interpolate, Stream *maskStr, int maskWidth, int maskHeight, GfxImageColorMap *maskColorMap, bool maskInterpolate) override;
 
     //----- output
 
@@ -89,11 +100,20 @@ public:
         int pageNumber;
         int drawCharCount;
         int unicodeMappedCount;
-        std::string pageType; // "IMAGE", "UNICODE_ALL_MATCH", "UNICODE_ALL_MATCH_BUT_LESS_CHARS", "UNICODE_NONE_MATCH", "UNICODE_PARTIAL_MATCH"
+        std::string pageType; // "IMAGE", "OCR_INVISIBLE_LAYER", "UNICODE_ALL_MATCH", "UNICODE_ALL_MATCH_BUT_LESS_CHARS", "UNICODE_NONE_MATCH", "UNICODE_PARTIAL_MATCH"
         std::vector<UndecodedCharInfo> undecodedChars; // Unique (charCode, fontName) pairs that failed Unicode mapping
     };
 
     const std::vector<PageStats> &getPageResults() const { return pageResults; }
+
+    // Bounding box in device space
+    struct BBox
+    {
+        double xMin;
+        double yMin;
+        double xMax;
+        double yMax;
+    };
 
 private:
     static constexpr int MIN_CHAR_THRESHOLD = 10; // Minimum character count to consider page as having meaningful text
@@ -101,6 +121,23 @@ private:
     std::vector<PageStats> pageResults;
     PageStats currentPageStats;
     std::set<std::pair<int, std::string>> seenUndecodedKeys; // Tracks (charCode, fontName) seen on current page for deduplication
+
+    // OCR detection state
+    bool hasInvisibleText;
+
+    int invisibleGlyphCount;
+    int invisibleGlyphWithToUnicodeCount;
+
+    bool allGlyphsInsideImage;
+
+    std::vector<BBox> imageBBoxes;
+    std::vector<BBox> glyphBBoxes;
+
+    // Registers an image XObject's bounding box in device space
+    void registerImageBBox(GfxState *state, int width, int height);
+
+    // Returns true if the Unicode codepoint is considered invalid for text extraction
+    static bool isInvalidUnicode(Unicode cp);
 };
 
 #endif
