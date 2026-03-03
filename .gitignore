@@ -37,3 +37,5 @@ poppler/poppler_private_export.h
 poppler/utils/
 .dockerignore
 Dockerfile
+
+settings.json

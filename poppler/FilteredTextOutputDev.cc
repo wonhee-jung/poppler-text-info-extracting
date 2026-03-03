@@ -31,6 +31,20 @@ bool isPrivateUseCodePoint(Unicode cp)
     return (cp >= 0xE000 && cp <= 0xF8FF) || (cp >= 0xF0000 && cp <= 0xFFFFD) || (cp >= 0x100000 && cp <= 0x10FFFD);
 }
 
+bool isRejectedEvenIfMapped(Unicode cp)
+{
+    if (cp == 0x0000 || cp == 0xFFFD || cp == 0x00FF) {
+        return true;
+    }
+    if (!UnicodeIsValid(cp)) {
+        return true;
+    }
+    if (cp >= 0x0001 && cp <= 0x001F && cp != 0x0009 && cp != 0x000A && cp != 0x000D) {
+        return true;
+    }
+    return cp == 0x007F;
+}
+
 bool hasTrustedToUnicodeMapping(const GfxState *state, CharCode c, const Unicode *u, int uLen)
 {
     if (state == nullptr || u == nullptr || uLen <= 0) {
@@ -54,6 +68,9 @@ bool hasTrustedToUnicodeMapping(const GfxState *state, CharCode c, const Unicode
     }
 
     for (int i = 0; i < uLen; ++i) {
+        if (isRejectedEvenIfMapped(mapped[i])) {
+            return false;
+        }
         if (mapped[i] != u[i]) {
             return false;
         }
@@ -77,6 +94,8 @@ FilteredTextOutputDev::FilteredTextOutputDev(const char *fileName,
       filteredCharCount(0),
       skippedCharCount(0)
 {
+    // 임베딩 전처리용 출력에서는 페이지 구분용 form feed(0x0C)를 쓰지 않는다.
+    setTextPageBreaks(false);
 }
 
 FilteredTextOutputDev::FilteredTextOutputDev(TextOutputFunc func,
@@ -88,9 +107,21 @@ FilteredTextOutputDev::FilteredTextOutputDev(TextOutputFunc func,
       filteredCharCount(0),
       skippedCharCount(0)
 {
+    // 임베딩 전처리용 출력에서는 페이지 구분용 form feed(0x0C)를 쓰지 않는다.
+    setTextPageBreaks(false);
 }
 
 FilteredTextOutputDev::~FilteredTextOutputDev() = default;
+
+void FilteredTextOutputDev::beginActualText(GfxState * /*state*/, const GooString * /*text*/)
+{
+    // 화면에 그려진 글자의 필터링 결과만 사용
+}
+
+void FilteredTextOutputDev::endActualText(GfxState * /*state*/)
+{
+    // beginActualText()를 무시하므로 endActualText()도 동작하지 않음
+}
 
 //------------------------------------------------------------------------
 // isInvalidUnicode
@@ -103,8 +134,8 @@ FilteredTextOutputDev::~FilteredTextOutputDev() = default;
 //   잘못된 유니코드 scalar 값
 //   U+FFFD        대체 문자 (변환 실패를 나타내는 마커)
 //
-// PUA는 코드포인트만으로는 제거하지 않고 drawChar()에서 ToUnicode 매핑을
-// 신뢰할 수 있는지 확인한 뒤 제거 여부를 결정한다.
+// PUA는 코드포인트만으로는 제거하지 않고 drawChar()에서 ToUnicode 매핑이
+// 존재하고, 그 결과 자체도 금지 문자가 아닌지 확인한 뒤 제거 여부를 결정한다.
 //------------------------------------------------------------------------
 bool FilteredTextOutputDev::isInvalidUnicode(Unicode cp)
 {
@@ -162,11 +193,6 @@ void FilteredTextOutputDev::drawChar(GfxState *state,
     for (int i = 0; i < uLen; ++i) {
         const Unicode cp = u[i];
         if (isInvalidUnicode(cp)) {
-            continue;
-        }
-
-        // ToUnicode가 없는 폰트에서 단독 0xFF가 새어 나오는 경우를 제거한다.
-        if (!trustedToUnicode && cp == 0x00FF) {
             continue;
         }
 

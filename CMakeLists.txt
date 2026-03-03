@@ -489,6 +489,7 @@ set(poppler_SRCS
   poppler/PSOutputDev.cc
   poppler/TextOutputDev.cc
   poppler/TextAnalysisOutputDev.cc
+  poppler/FilteredTextOutputDev.cc
   poppler/PageLabelInfo.cc
   poppler/SecurityHandler.cc
   poppler/Sound.cc

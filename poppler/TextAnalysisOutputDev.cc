@@ -12,14 +12,80 @@
 
 #include "config.h"                 // Poppler 라이브러리 빌드 설정
 #include "TextAnalysisOutputDev.h"  // TextAnalysisOutputDev 클래스 헤더 파일
+#include "CharCodeToUnicode.h"      // ToUnicode CMap 검증
 #include "GfxFont.h"                // 폰트 관련 정보를 정의하는 클래스
 #include "GfxState.h"               // 폰트 상태 관련 정보를 관리하는 클래스
+#include "UTF.h"                    // Unicode scalar 유효성 검증
 #include <sstream>                  // JSON 출력 상태를 관리하는 라이브러리
 #include <iomanip>
 
 //------------------------------------------------------------------------
 // Helper functions
 //------------------------------------------------------------------------
+
+namespace {
+
+// 유니코드가 개인용 영역(Private Use Area, PUA)에 속하는지 확인하는 메서드
+bool isPrivateUseCodePoint(Unicode cp)
+{
+    return (cp >= 0xE000 && cp <= 0xF8FF) ||  // BMP PUA
+    (cp >= 0xF0000 && cp <= 0xFFFFD)  // Plane 15 PUA
+    || (cp >= 0x100000 && cp <= 0x10FFFD); // Plane 16 PUA
+}
+
+// PUA 내 유니코드가 유효 글자로 매핑된 경우, 해당 글자가 유효한 유니코드를 갖는지 판별하는 메서드
+bool isRejectedEvenIfMapped(Unicode cp)
+{
+    if (cp == 0x0000 || cp == 0xFFFD) { // Null, 대체 문자
+        return true;
+    }
+    if (!UnicodeIsValid(cp)) { // UTF.h의 유틸 함수 - UTF-8의 표준 유니코드인지 확인
+        return true;
+    }
+    if (cp >= 0x0001 && cp <= 0x001F && cp != 0x0009 && cp != 0x000A && cp != 0x000D) { // ASCII 제어 문자 (HT/LF/CR 제외)
+        return true;
+    }
+    return cp == 0x007F; // ASCII DEL 제어 문자
+}
+
+// Tounicode CMap으로 매핑한 값이 유효한지 확인하는 메서드
+bool hasTrustedToUnicodeMapping(const GfxState *state, CharCode c, const Unicode *u, int uLen)
+{
+    if (state == nullptr || u == nullptr || uLen <= 0) { // 변환이 안된 경우
+        return false;
+    }
+
+    const std::shared_ptr<GfxFont> &font = state->getFont(); // 해당 폰트에 Tounicode CMap 존재 여부 확인
+    if (!font || !font->hasToUnicodeCMap()) {
+        return false;
+    }
+
+    const CharCodeToUnicode *toUnicode = font->getToUnicode(); // 해당 글자의 Tounicode CMap 호출
+    if (toUnicode == nullptr) {
+        return false;
+    }
+
+    // 매핑 값 비교
+    const Unicode *mapped = nullptr;
+    const int mappedLen = toUnicode->mapToUnicode(c, &mapped);
+    if (mapped == nullptr || mappedLen != uLen) {
+        return false;
+    }
+
+    // 매핑된 유니코드가 유효한지 검증
+    for (int i = 0; i < uLen; ++i) {
+        if (isRejectedEvenIfMapped(mapped[i])) {
+            return false;
+        }
+        if (mapped[i] != u[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+} // namespace
 
 // 폰트 종류를 관리하는 메서드
 static std::string fontTypeToString(GfxFontType type)
@@ -73,11 +139,12 @@ static std::string escapeJsonString(const std::string &s)
 // 유효하지 않은 유니코드를 정의한 메서드
 bool TextAnalysisOutputDev::isInvalidUnicode(Unicode cp)
 {
-    if (cp == 0xFFFD)                      return true; // U+FFFD: 대체 문자
     if (cp == 0x0000)                      return true; // U+0000: Null 문자 
-    if (cp >= 0x0001 && cp <= 0x001F)      return true; // U+0001~001F: ASCII 제어 문자
-    if (cp >= 0xE000 && cp <= 0xF8FF)      return true; // PUA(사용자 정의 영역): 사용자가 직접 정의해서 사용하는 커스텀 영역, 표준 유니코드를 갖지 않음
-    if (cp >= 0xD800 && cp <= 0xDFFF)      return true; // 분리 서로게이트, PUA와 비슷한 커스텀 영역, 다만 정의한 유니코드를 조합해서 사용
+    if (cp == 0xFFFD)                      return true; // U+FFFD: 대체 문자
+    if (!UnicodeIsValid(cp))               return true; // 잘못된 Unicode scalar 값 (분리 서로게이트 포함)
+    if (cp >= 0x0001 && cp <= 0x001F)      return true; // U+0001~U+001F: ASCII 제어 문자 (HT/LF/CR 포함)
+    if (cp == 0x007F)                      return true; // ASCII DEL 제어 문자
+    if (cp == 0x00FF)                      return true; // 깨진 매핑에서 자주 보이는 비정상 값
     return false;
 }
 
@@ -161,6 +228,8 @@ void TextAnalysisOutputDev::drawChar(GfxState *state, double /*x*/, double /*y*/
                                      CharCode c, int /*nBytes*/,
                                      const Unicode *u, int uLen)
 {
+    const bool trustedToUnicode = hasTrustedToUnicodeMapping(state, c, u, uLen);
+
     // ---- Unicode 유효성 판정 ----
     // ToUnicode CMap 존재 여부가 아닌, Poppler가 실제로 변환한 u[] 배열(cmap 배열)로 판단
     // u 배열이 없거나 비어 있으면 변환 실패, false 할당
@@ -169,6 +238,10 @@ void TextAnalysisOutputDev::drawChar(GfxState *state, double /*x*/, double /*y*/
     if (validUnicode) {
         for (int i = 0; i < uLen; ++i) {
             if (isInvalidUnicode(u[i])) { // 앞서 정의한 유효하지 않은 유니코드 배열과 매칭
+                validUnicode = false;
+                break;
+            }
+            if (isPrivateUseCodePoint(u[i]) && !trustedToUnicode) {
                 validUnicode = false;
                 break;
             }

@@ -1,0 +1,109 @@
+.\" pdftofilteredtext(1) man page
+.TH pdftofilteredtext 1 "February 2026" "poppler" "User Commands"
+.SH NAME
+pdftofilteredtext \- PDF to plain text converter with automatic invalid-unicode filtering
+.SH SYNOPSIS
+.B pdftofilteredtext
+[\fIoptions\fR] \fIPDF-file\fR [\fItext-file\fR]
+.SH DESCRIPTION
+.B pdftofilteredtext
+converts PDF documents to plain text, automatically removing characters
+that cannot be mapped to valid Unicode code points.  Characters in the
+following ranges are silently discarded:
+.TP
+U+0000
+Null character
+.TP
+U+0001\(enU+001F
+ASCII control characters
+.TP
+U+D800\(enU+DFFF
+Lone surrogate code points
+.TP
+U+E000\(enU+F8FF
+Private Use Area (PUA)
+.TP
+U+FFFD
+Unicode Replacement Character (marks a decoding failure)
+.PP
+This behaviour is especially useful for PDFs that embed Type3 or CID fonts
+with incomplete or absent ToUnicode CMaps, which often produce large numbers
+of unmappable glyphs that clutter the extracted text.
+.PP
+If \fItext-file\fR is not given, the output is written to
+\fIPDF-file\fR\fB.txt\fR (replacing or stripping a \fB.pdf\fR extension).
+Specify \fB\-\fR as \fItext-file\fR to write to standard output.
+.SH OPTIONS
+.TP
+.BI \-f " number"
+First page to convert.  Default: 1.
+.TP
+.BI \-l " number"
+Last page to convert.  Default: last page of the document.
+.TP
+.B \-layout
+Maintain the original physical layout of the text on the page.
+.TP
+.BI \-fixed " pitch"
+Assume fixed-pitch (tabular) text with the given character cell width
+(in points).
+.TP
+.B \-raw
+Keep strings in content-stream order instead of re-ordering them
+for reading.
+.TP
+.BI \-opw " password"
+Owner password for encrypted PDF files.
+.TP
+.BI \-upw " password"
+User password for encrypted PDF files.
+.TP
+.B \-q
+Suppress all messages and statistics printed to standard error.
+.TP
+.B \-v
+Print version information and exit.
+.TP
+.B \-h , \-help , \-\-help
+Print usage information and exit.
+.SH EXIT STATUS
+.TP
+0
+Successful conversion.
+.TP
+1
+Could not open the PDF file.
+.TP
+2
+Could not open or create the output file.
+.TP
+3
+Copying text from this document is not permitted (encrypted PDF).
+.TP
+99
+Usage error (bad options or missing arguments).
+.SH EXAMPLES
+Convert all pages to \fIdocument.txt\fR, removing invalid characters:
+.PP
+.nf
+    pdftofilteredtext document.pdf
+.fi
+.PP
+Convert pages 3\(en7, sending filtered text to standard output:
+.PP
+.nf
+    pdftofilteredtext \-f 3 \-l 7 document.pdf \-
+.fi
+.PP
+Preserve the physical page layout:
+.PP
+.nf
+    pdftofilteredtext \-layout document.pdf output.txt
+.fi
+.SH SEE ALSO
+.BR pdftotext (1),
+.BR pdftextanalysis (1),
+.BR poppler (8)
+.SH AUTHORS
+Based on the Poppler pdftotext utility.
+FilteredTextOutputDev added by Wonhee-jung (2026-02-27).

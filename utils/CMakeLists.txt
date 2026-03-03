@@ -154,6 +154,15 @@ target_link_libraries(pdftextanalysis ${common_libs})
 install(TARGETS pdftextanalysis DESTINATION bin)
 install(FILES pdftextanalysis.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 
+# pdftofilteredtext
+set(pdftofilteredtext_SOURCES ${common_srcs}
+  pdftofilteredtext.cc
+)
+add_executable(pdftofilteredtext ${pdftofilteredtext_SOURCES})
+target_link_libraries(pdftofilteredtext ${common_libs})
+install(TARGETS pdftofilteredtext DESTINATION bin)
+install(FILES pdftofilteredtext.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
+
 # pdftohtml
 set(pdftohtml_SOURCES ${common_srcs}
   InMemoryFile.cc
